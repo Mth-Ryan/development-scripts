@@ -1,0 +1,264 @@
+#! /usr/bin/env python3
+
+# MIT License
+# 
+# Copyright (c) 2023 Mateus Ryan <mthryan@protonmail.com>
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+import argparse
+import json
+import sys
+import os
+from typing import Any, Dict, Tuple, List
+
+# Temporary docker-compose.yml file 
+COMPOSE_FILE_PATH = "/tmp/db-docker.json"
+
+# Create docker-compose file and try to up the services
+def up(args):
+    if args.sql == None and args.cache == None:
+        print("at least one database is required to initialize the docker service", end='\n\n')
+        parser.print_help()
+        sys.exit(1)
+    sql_service = get_sql_service(args) if args.sql != None else None
+    cache_service = get_cache_service(args) if args.cache != None else None
+    conf = mount_compose_conf(sql_service, cache_service)
+    create_compose_conf(conf)
+    os.system(f'docker-compose -f {COMPOSE_FILE_PATH} up -d')
+
+
+# Try to down the services
+def down():
+    os.system(f'docker-compose -f {COMPOSE_FILE_PATH} down')
+
+
+# list all available databases
+def list_databases(args):
+    sql = sql_services(args.sqldbname, args.sqluser, args.sqlpass, args.sqlport)
+    cache = cache_services(args.cachename, args.cacheuser, args.cachepass, args.cacheport)
+
+    print("SQL databases:")
+    for name, service in sql.items():
+        print(f'{name:<15}image: {service["image"]}')
+
+
+    print("\nCache databases:")
+    for name, service in cache.items():
+        print(f'{name:<15}image: {service["image"]}')
+
+
+# Map of all sql services available and the volumes names
+def sql_services(name: str, user: str, password: str, port: str) -> Dict[str, Dict[str, Any]]:
+    return {
+        "postgres": {
+            "image": "postgres:14.5",
+            "container_name": "postgres_docker",
+            "hostname": "postgres_docker",
+            "environment": {
+                "POSTGRES_DB": name,
+                "POSTGRES_USER": user,
+                "POSTGRES_PASSWORD": password,
+            },
+            "restart": "on-failure",
+            "ports": [
+                f'{port if port != None else "5432"}:5432',
+            ],
+            "volumes": [
+                "postgres_data:/var/lib/postgresql/data",
+            ],
+        },
+
+        "mysql": {
+            "image": "mysql:8.0.33",
+            "container_name": "mysql_docker",
+            "hostname": "mysql_docker",
+            "environment": {
+                "MYSQL_DATABASE": name,
+                "MYSQL_USER": user,
+                "MYSQL_PASSWORD": password,
+                "MYSQL_ROOT_PASSWORD": password,
+            },
+            "restart": "on-failure",
+            "ports": [
+                f'{port if port != None else "3306"}:3306',
+            ],
+            "volumes": [
+                "mysql_data:/var/lib/mysql",
+            ],
+        },
+
+        "mariadb": {
+            "image": "mariadb:10.11.2",
+            "container_name": "mariadb_docker",
+            "hostname": "mariadb_docker",
+            "environment": {
+                "MYSQL_DATABASE": name,
+                "MYSQL_USER": user,
+                "MYSQL_PASSWORD": password,
+                "MYSQL_ROOT_PASSWORD": password,
+            },
+            "restart": "on-failure",
+            "ports": [
+                f'{port if port != None else "3306"}:3306',
+            ],
+            "volumes": [
+                "mysql_data:/var/lib/mysql",
+            ],
+        },
+    }
+
+
+# Map of all cache services available and the volumes names
+def cache_services(name: str, user: str, password: str, port: str) -> Dict[str, Dict[str, Any]]:
+    return {
+        "redis": {
+            "image": "redis:7.0.7-alpine",
+            "container_name": "redis_docker",
+            "hostname": "redis_docker",
+            "restart": "on-failure",
+            "ports": [
+                f'{port if port != None else "6379"}:6379',
+            ],
+            "command": f"redis-server --save 20 1 --loglevel warning --requirepass {password}",
+            "volumes": [
+                "redis_data:/data",
+            ],
+        },
+
+
+        "memcached": {
+            "image": "bitnami/memcached:latest",
+            "container_name": "memcached_docker",
+            "hostname": "memcached_docker",
+            "environment": {
+                "MEMCACHED_USERNAME": user,
+                "MEMCACHED_PASSWORD": password,
+            },
+            "restart": "on-failure",
+            "ports": [
+                f'{port if port != None else "11211"}:11211',
+            ],
+        },
+    }
+
+
+def get_sql_service(args) -> Tuple[str, Dict[str, Any]]:
+    services = sql_services(args.sqldbname, args.sqluser, args.sqlpass, args.sqlport)
+    if args.sql in services:
+        return (args.sql, services[args.sql])
+    else:
+        print(f"unknow sql service with name: {args.sql}")
+        sys.exit(1)
+
+
+def get_cache_service(args) -> Tuple[str, Dict[str, Any]]:
+    services = cache_services(args.cachename, args.cacheuser, args.cachepass, args.cacheport)
+    if args.cache in services:
+        return (args.cache, services[args.cache])
+    else:
+        print(f"unknow cache service with name: {args.cache}")
+        sys.exit(1)
+
+
+def mount_compose_conf(sql_service = None, cache_service = None) -> str:
+    sql_name = ""
+    sql = {}
+
+    if sql_service != None:
+        sql_name = sql_service[0]
+        sql = sql_service[1]
+        sql["networks"] = [ "db_docker_net" ]
+
+    cache_name = ""
+    cache = {}
+
+    if cache_service != None:
+        cache_name = cache_service[0]
+        cache = cache_service[1]
+        cache["networks"] = [ "db_docker_net" ]
+
+    volumes = []
+    if sql_service != None and "volumes" in sql:
+        volumes += get_volumes_from_service(sql)
+    if cache_service != None and "volumes" in cache:
+        volumes += get_volumes_from_service(cache)
+
+    conf = {
+        "version": "3.8",
+        "services": {},
+
+        "networks": {
+            "db_docker_net": {
+                "driver": "bridge",
+            }
+        },
+    }
+
+    if sql_service != None:
+        conf["services"][sql_name] = sql
+    if cache_service != None:
+        conf["services"][cache_name] = cache
+    if len(volumes) > 0:
+        conf["volumes"] = dict(zip(volumes, [None]*len(volumes)))
+
+    return json.dumps(conf)
+
+def get_volumes_from_service(service) -> List[str]:
+    plane_vol = service["volumes"]
+    return [x.split(":")[0] for x in plane_vol]
+
+
+def create_compose_conf(conf):
+    file = open(COMPOSE_FILE_PATH, "w")
+    try:
+        file.write(conf)
+        file.close()
+    except:
+        print("unable to create the temporary docker-compose file")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+                        prog='db-docker',
+                        description='start a docker compose service with a sql and a cache database',
+                        epilog='')
+
+    parser.add_argument('-s', '--sql', help='SQL database option. Ex: postgres')
+    parser.add_argument('-c', '--cache', help='Cache database option. Ex: redis')
+    parser.add_argument('--down', help='try to down the services if is running', action='store_true')
+    parser.add_argument('--list', help='list all databases names and exit', action='store_true')
+    parser.add_argument('--sqldbname', default="docker", metavar='Name', help='SQL database name')
+    parser.add_argument('--sqluser', default="docker", metavar='User', help='SQL database user')
+    parser.add_argument('--sqlpass', default="docker", metavar='Password', help='SQL database password')
+    parser.add_argument('--sqlport', metavar='Port', help='SQL database port')
+    parser.add_argument('--cachename', default="docker", metavar='Name', help='Cache database name [if possible]')
+    parser.add_argument('--cacheuser', default="docker", metavar='User', help='Cache database user [if possible]')
+    parser.add_argument('--cachepass', default="docker", metavar='Password', help='Cache database password [if possible]')
+    parser.add_argument('--cacheport', metavar='Port', help='Cache database port')
+
+    args = parser.parse_args()
+
+    if args.list:
+        list_databases(args)
+    elif args.down:
+        down()
+    else:
+        up(args)
