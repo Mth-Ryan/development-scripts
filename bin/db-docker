@@ -33,6 +33,7 @@ COMPOSE_FILE_PATH = "/tmp/db-docker.json"
 
 # Create docker-compose file and try to up the services
 def up(args):
+    manager = select_manager(args.manager)
     if args.sql == None and args.cache == None:
         print("at least one database is required to initialize the docker service", end='\n\n')
         parser.print_help()
@@ -41,12 +42,13 @@ def up(args):
     cache_service = get_cache_service(args) if args.cache != None else None
     conf = mount_compose_conf(sql_service, cache_service)
     create_compose_conf(conf)
-    os.system(f'docker-compose -f {COMPOSE_FILE_PATH} up -d')
+    os.system(f'{manager} -f {COMPOSE_FILE_PATH} up -d')
 
 
 # Try to down the services
-def down():
-    os.system(f'docker-compose -f {COMPOSE_FILE_PATH} down')
+def down(args):
+    manager = select_manager(args.manager)
+    os.system(f'{manager} -f {COMPOSE_FILE_PATH} down')
 
 
 # list all available databases
@@ -234,6 +236,12 @@ def create_compose_conf(conf):
         print("unable to create the temporary docker-compose file")
         sys.exit(1)
 
+def select_manager(option):
+    if option == "podman":
+        return "podman-compose"
+    else:
+        return "docker-compose"
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -243,6 +251,7 @@ if __name__ == "__main__":
 
     parser.add_argument('-s', '--sql', help='SQL database option. Ex: postgres')
     parser.add_argument('-c', '--cache', help='Cache database option. Ex: redis')
+    parser.add_argument('-m', '--manager', help='Choose the container manager. Options: [docker, podman]')
     parser.add_argument('--down', help='try to down the services if is running', action='store_true')
     parser.add_argument('--list', help='list all databases names and exit', action='store_true')
     parser.add_argument('--sqldbname', default="docker", metavar='Name', help='SQL database name')
@@ -259,6 +268,6 @@ if __name__ == "__main__":
     if args.list:
         list_databases(args)
     elif args.down:
-        down()
+        down(args)
     else:
         up(args)
