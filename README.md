@@ -4,7 +4,7 @@ Some usefull scripts for development
 ## Examples
 
 ### db-docker
-db-docker is a script to create database services in docker compose quickly and easily.
+db-docker is a script to create database services in docker compose quick and easy.
 
 ```bash
 db-docker --list
